@@ -8,10 +8,10 @@ sc = SparkContext(appName="sn_parse")
 sqlCtx = SQLContext(sc)
 sc.addPyFile('pyspark_csv.py')
 
+# This should probably be pyspark csv as well
 split_gbif = lambda s: [c.strip() for c in s.split("\t")]
-split_idigbio = lambda s: [c.strip() for c in s.split(",")]
-get_idigbio_words = lambda a: [w.lower() for w in nltk.tokenize.wordpunct_tokenize(a[1])]  
 count = lambda v1, v2: v1 + v2
+prep_count = lambda t: (t[0], 1)
 
 numeric = re.compile("\d+")
 alpha = re.compile("\w+")
@@ -116,8 +116,6 @@ def parts_in_order(t):
 def parse_named_tokens(s):
     a = s.split(" ")
     return (a[0], [a[1]])
-
-prep_count = lambda t: (t[0], 1)
 
 named_tokens = sc.textFile("named_tokens.txt").map(parse_named_tokens)
 gbif = sc.textFile("backbone/taxon.txt")

@@ -1,0 +1,8 @@
+sp SP_M
+gen GEN_M
+var VAR_M
+f FORM_M
+( PAREND
+) PAREND
+. PERIOD
+, COMMA
