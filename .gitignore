@@ -57,5 +57,7 @@ docs/_build/
 target/
 
 uniquenames.csv
+uniquenames.test.csv
 sn_parsed*
 backbone*
+uniquenames_parsed*

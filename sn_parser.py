@@ -3,6 +3,7 @@ import sys
 import re
 import nltk.tokenize
 import pyspark_csv as pycsv
+import os
 
 sc = SparkContext(appName="sn_parse")
 sqlCtx = SQLContext(sc)
@@ -11,21 +12,39 @@ sc.addPyFile('pyspark_csv.py')
 # This should probably be pyspark csv as well
 split_gbif = lambda s: [c.strip() for c in s.split("\t")]
 count = lambda v1, v2: v1 + v2
-prep_count = lambda t: (t[0], 1)
+prep_count = lambda t: (t[0], t[1][1])
 
 numeric = re.compile("\d+")
 alpha = re.compile("\w+")
 
+def parse_named_tokens(s):
+    a = s.split(" ")
+    return (a[0], str(a[1]))
+
+named_tokens = sc.textFile("named_tokens.txt").map(parse_named_tokens)
+named_tokens.cache()
+
+named_token_words = sc.broadcast(named_tokens.map(lambda t: t[0]).collect())
+
 def get_gbif_word_type(a):
     tokens = []
     try:
-        cn_words = nltk.tokenize.wordpunct_tokenize(a[4])
-        sn_words = nltk.tokenize.wordpunct_tokenize(a[3])
-        tokens.append((cn_words[-1].lower(), str(a[5].upper())))
+        if a[4] != "":
+            cn_words = [w.lower() for w in nltk.tokenize.wordpunct_tokenize(a[4])]
+        else:
+            cn_words = []
+
+        if a[3] != "":
+            sn_words = [w.lower() for w in nltk.tokenize.wordpunct_tokenize(a[3])]
+        else:
+            sn_words = []
+
+        if len(cn_words) > 0 and cn_words[-1] not in named_token_words.value:
+            tokens.append((cn_words[-1], str(a[5].upper())))
+
         for aw in sn_words:
-            if aw in cn_words or not alpha.match(aw):
-                continue
-            tokens.append((aw.lower(), "AUTHOR"))
+            if aw not in cn_words and alpha.match(aw) and aw not in named_token_words.value:
+                tokens.append((aw, "AUTHOR"))
     except:
         print a
     return tokens
@@ -34,7 +53,7 @@ def get_idigbio_words_extended(a):
     tokens = []
     if a[1] is not None:
         for i, w in enumerate(nltk.tokenize.wordpunct_tokenize(a[1])):
-            tokens.append((w.lower(), (a[0],i)))
+            tokens.append((w.lower(), ((a[0],int(a[2])),i)))
     return tokens
 
 def un_tuple(t):
@@ -55,7 +74,7 @@ def parts_in_order(t):
     k = t[0]
     pa = t[1]
     pa = [v[1] for v in sorted(pa,key=lambda v: v[0])]
-    passes = 2
+    passes = 1
     while passes > 0:
         if len(pa) <= 1:
             break
@@ -63,42 +82,41 @@ def parts_in_order(t):
         t_out = []
         #pair wise matches
         while i < len(pa):
-            if i+1 < len(pa):
+            #print i, len(pa), pa[i:]
+            consumed = False
+            if not consumed and i+2 < len(pa):
+                if (pa[i+1] == "PERIOD" or "PERIOD" in pa[i+1]):
+                    mark = None
+                    if isinstance(pa[i],str):
+                        if pa[i].endswith("_M"):
+                            mark = pa[i]
+                    else:
+                        for c in pa[i]:
+                            if c.endswith("_M"):
+                                mark = c
+                                break
+
+                    if mark is not None:
+                        mt = mark.split("_")[0]
+                        if pa[i+2] == mt or mt in pa[i+2]:
+                            t_out.extend(pa[i:i+2] + [mt])
+                            i += 3
+                            consumed = True
+                elif (pa[i] == "GENUS" or "GENUS" in pa[i]) and (pa[i+1] == "SPECIES" or "SPECIES" in pa[i+1]) and (pa[i+2] == "SUBSPECIES" or "SUBSPECIES" in pa[i+2]):
+                    t_out.extend(["GENUS","SPECIES","SUBSPECIES"])
+                    i += 3
+                    consumed = True
+
+            if not consumed and i+1 < len(pa):
                 if (pa[i] == "GENUS" or "GENUS" in pa[i]) and (pa[i+1] == "SPECIES" or "SPECIES" in pa[i+1]):
-                    t_out.append("GENUS SPECIES")
+                    t_out.extend(["GENUS","SPECIES"])
                     i += 2
-                # Mark abbrv + period consumers
-                elif (pa[i] == "SP_M" or "SP_M" in pa[i]) and pa[i+1] == "PERIOD":
-                    t_out.append("SP_MARK")
-                    i += 2
-                elif (pa[i] == "GEN_M" or "GEN_M" in pa[i]) and pa[i+1] == "PERIOD":
-                    t_out.append("GEN_MARK")
-                    i += 2
-                elif (pa[i] == "VAR_M" or "VAR_M" in pa[i]) and pa[i+1] == "PERIOD":
-                    t_out.append("VAR_MARK")
-                    i += 2
-                elif (pa[i] == "FORM_M" or "FORM_M" in pa[i]) and pa[i+1] == "PERIOD":
-                    t_out.append("FORM_MARK")
-                    i += 2
-                # Mark + item consumers
-                elif pa[i] == "SP_MARK" and (pa[i+1] == "SPECIES" or "SPECIES" in pa[i+1]):
-                    t_out.append("SP_MARK SPECIES")
-                    i += 2
-                elif pa[i] == "GEN_MARK" and (pa[i+1] == "GENUS" or "GENUS" in pa[i+1]):
-                    t_out.append("GEN_MARK GENUS")
-                    i += 2
-                elif pa[i] == "VAR_MARK" and (pa[i+1] == "VARIETY" or "VARIETY" in pa[i+1]):
-                    t_out.append("VAR_MARK VARIETY")
-                    i += 2
-                elif pa[i] == "FORM_MARK" and (pa[i+1] == "FORM" or "FORM" in pa[i+1]):
-                    t_out.append("FORM_MARK FORM")
-                    i += 2                    
-                else:
-                    t_out.append(pa[i])
-                    i += 1                    
-            else:
+                    consumed = True
+
+            if not consumed:
                 t_out.append(pa[i])
                 i += 1
+            #print consumed, t_out
         passes -= 1
         pa = t_out        
 
@@ -113,22 +131,38 @@ def parts_in_order(t):
 
     return (str(" ".join(pa)), k)
 
-def parse_named_tokens(s):
-    a = s.split(" ")
-    return (a[0], [a[1]])
+def reverse_labels(t):
+    return (t[1][0], t[0])
 
-named_tokens = sc.textFile("named_tokens.txt").map(parse_named_tokens)
+def names_as_tuples(r):
+    return (r[0], (r[1], r[2]))
+
+def merge_labels_name(t):
+    a = []
+    labels = t[1][1].split(" ")
+    if len(labels) > 0:
+        tokens = nltk.wordpunct_tokenize(t[1][0][0])
+        for i, tok in enumerate(tokens):
+            a.append((tok, labels[i]))
+
+    return (t[0], a)
+
 gbif = sc.textFile("backbone/taxon.txt")
-gb_names = gbif.map(split_gbif).flatMap(get_gbif_word_type).aggregateByKey([],lambda a, s: list(set(a + [s])),lambda a1,a2: list(set(a1 + a2))).union(named_tokens)
+gb_names = gbif.map(split_gbif).flatMap(get_gbif_word_type).union(named_tokens).aggregateByKey([],lambda a, s: list(set(a + [s])),lambda a1,a2: list(set(a1 + a2)))
 
 idigbio = sc.textFile("uniquenames.csv")
 idigbio_names = pycsv.csvToDataFrame(sqlCtx,idigbio)
+idigbio_names.cache()
 idigbio_words = idigbio_names.flatMap(get_idigbio_words_extended)
 idigbio_tokens = idigbio_words.leftOuterJoin(gb_names)
-idigbio_tokens.cache()
-idigbio_tokens.saveAsTextFile("sn_parsed_intermediate")
+# idigbio_tokens.cache()
+# idigbio_tokens.saveAsTextFile("sn_parsed_intermediate")
 idigbio_labeled = idigbio_tokens.map(un_tuple).aggregateByKey([],lambda a, s: a + [s], lambda a1, a2: a1 + a2).map(parts_in_order)
 idigbio_labeled.cache()
 
 idigbio_labeled.saveAsTextFile("sn_parsed_format_by_key")
 idigbio_labeled.map(prep_count).reduceByKey(count).saveAsTextFile("sn_parsed")
+
+idigbio_labeled_rev = idigbio_labeled.map(reverse_labels)
+idigbio_parsed = idigbio_names.map(names_as_tuples).join(idigbio_labeled_rev).map(merge_labels_name)
+idigbio_parsed.saveAsTextFile("uniquenames_parsed")
