@@ -13,3 +13,13 @@ Taxonomic Parsing in Spark
  * sn_parsed_massaged.txt: detected formats in order of rank
  * sn_parsed_intermediate.txt: intermediate token detection (mainly for debug)
  * sn_parsed_format_by_key.txt: list of format, taxon_id pairs (using the id as the first column of the uniquenames file)
+
+## Performance
+
+Performance on a 4 core 16GB desktop machine w/ 10GB of memory given to spark on idigbio's 1.7 million name dataset:
+
+real    4m14.021s
+user    1m3.244s
+sys 0m6.006s
+
+About half of that is fixed setup time loading and parsing the GBIF taxonomy.
