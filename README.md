@@ -18,8 +18,8 @@ Taxonomic Parsing in Spark
 
 Performance on a 4 core 16GB desktop machine w/ 10GB of memory given to spark on idigbio's 1.7 million name dataset:
 
-real    4m14.021s
-user    1m3.244s
-sys 0m6.006s
+    real    4m14.021s
+    user    1m3.244s
+    sys 0m6.006s
 
 About half of that is fixed setup time loading and parsing the GBIF taxonomy.
